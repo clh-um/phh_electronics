@@ -1,0 +1,310 @@
+// MQTT Management System
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+// WiFi credentials
+const char* ssid = "RC-LAPTOP 0435";
+const char* password = "1234567890";
+
+// MQTT Broker settings
+const char* mqtt_server = "5e44e2f2818640afae596ca821517f0e.s1.eu.hivemq.cloud";
+const int mqtt_port = 8883;
+const char* mqtt_username = "esp32";
+const char* mqtt_password = "1234567890aA";
+
+// Baltimore CyberTrust Root Certificate
+const char* root_ca = R"(
+-----BEGIN CERTIFICATE-----
+MIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUFADBaMQswCQYDVQQGEwJJ
+RTESMBAGA1UEChMJQmFsdGltb3JlMRMwEQYDVQQLEwpDeWJlclRydXN0MSIwIAYD
+VQQDExlCYWx0aW1vcmUgQ3liZXJUcnVzdCBSb290MB4XDTAwMDUxMjE4NDYwMFoX
+DTI1MDUxMjIzNTkwMFowWjELMAkGA1UEBhMCSUUxEjAQBgNVBAoTCUJhbHRpbW9y
+ZTETMBEGA1UECxMKQ3liZXJUcnVzdDEiMCAGA1UEAxMZQmFsdGltb3JlIEN5YmVy
+VHJ1c3QgUm9vdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKMEuyKr
+mD1X6CZymrV51Cni4eiVgLGw41uOKymaZN+hXe2wCQVt2yguzmKiYv60iNoS6zjr
+IZ3AQSsBUnuId9Mcj8e6uYi1agnnc+gRQKfRzMpijS3ljwumUNKoUMMo6vWrJYeK
+mpYcqWe4PwzV9/lSEy/CG9VwcPCPwBLKBsua4dnKM3p31vjsufFoREJIE9LAwqSu
+XmD+tqYF/LTdB1kC1FkYmGP1pWPgkAx9XbIGevOF6uvUA65ehD5f/xXtabz5OTZy
+dc93Uk3zyZAsuT3lySNTPx8kmCFcB5kpvcY67Oduhjprl3RjM71oGDHweI12v/ye
+jl0qhqdNkNwnGjkCAwEAAaNFMEMwHQYDVR0OBBYEFOWdWTCCR1jMrPoIVDaGezq1
+BE3wMBIGA1UdEwEB/wQIMAYBAf8CAQMwDgYDVR0PAQH/BAQDAgEGMA0GCSqGSIb3
+DQEBBQUAA4IBAQCFDF2O5G9RaEIFoN27TyclhAO992T9Ldcw46QQF+vaKSm2eT92
+9hkTI7gQCvlYpNRhcL0EYWoSihfVCr3FvDB81ukMJY2GQE/szKN+OMY3EU/t3Wgx
+jkzSswF07r51XgdIGn9w/xZchMB5hbgF/X++ZRGjD8ACtPhSNzkE1akxehi/oCr0
+Epn3o0WC4zxe9Z2etciefC7IpJ5OCBRLbf1wbWsaY71k5h+3zvDyny67G7fyUIhz
+ksLi4xaNmjICq44Y3ekQEe5+NauQrz4wlHrQMz2nZQ/1/I6eYs9HRCwBXbsdtTLS
+R9I4LtD+gdwyah617jzV/OeBHRnDJELqYzmp
+-----END CERTIFICATE-----
+)";
+
+// MQTT client
+WiFiClientSecure espClient;
+PubSubClient* client;
+
+// MQTT connection status tracking
+unsigned long lastReconnectAttempt = 0;
+const unsigned long reconnectInterval = 5000; // 5 seconds between attempts
+unsigned long lastPublishMillis = 0;
+const unsigned long publishInterval = 5000;  // Publish data every 5 seconds
+
+// Device ID related constants
+const int EEPROM_SIZE = 512;
+const int DEVICE_ID_ADDRESS = 0;
+const char* DEVICE_PREFIX = "HUM-";
+const int DEVICE_ID_LENGTH = 10;  // Including prefix and 5 char random ID
+
+// MQTT topics
+String deviceTopic;        // Will be set after device ID generation
+String commandTopic;       // Will be set after device ID generation
+String deviceId;
+
+// Generate or retrieve device ID
+String generateDeviceId() {
+    EEPROM.begin(EEPROM_SIZE);
+    
+    // Try to read existing device ID from EEPROM
+    String savedId = "";
+    for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
+        char c = EEPROM.read(DEVICE_ID_ADDRESS + i);
+        if (c != 0 && c != 255) { // Valid character
+            savedId += c;
+        }
+    }
+    
+    // If valid device ID exists, use it
+    if (savedId.length() == DEVICE_ID_LENGTH && savedId.startsWith(DEVICE_PREFIX)) {
+        EEPROM.end();
+        return savedId;
+    }
+    
+    // Generate new device ID
+    String newId = DEVICE_PREFIX;
+    const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    
+    // Generate 5 random characters
+    for (int i = 0; i < 5; i++) {
+        newId += charset[random(0, strlen(charset))];
+    }
+    
+    // Save to EEPROM
+    for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
+        EEPROM.write(DEVICE_ID_ADDRESS + i, newId[i]);
+    }
+    EEPROM.commit();
+    EEPROM.end();
+    
+    return newId;
+}
+
+void setupMQTT() {
+    // Setup WiFi
+    setupWiFi();
+    setDateTime();
+
+    // Generate or retrieve device ID
+    deviceId = generateDeviceId();
+    Serial.print("Device ID: ");
+    Serial.println(deviceId);
+    
+    // Set up MQTT topics with device ID
+    deviceTopic = "device/" + deviceId + "/data";
+    commandTopic = "device/" + deviceId + "/command";
+
+    // Configure secure client
+    espClient.setCACert(root_ca);
+    espClient.setInsecure(); // Try this if certificate validation fails
+
+    // Initialize MQTT client
+    client = new PubSubClient(espClient);
+    client->setServer(mqtt_server, mqtt_port);
+    client->setCallback(mqttCallback);
+    client->setBufferSize(1024);
+}
+
+void setupWiFi() {
+    Serial.println("\n=== WiFi Connection ===");
+    Serial.println("Connecting to: ");
+    Serial.println(ssid);
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    
+    randomSeed(micros());
+
+    // Wait for connection
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("\nWiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void setDateTime() {
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    
+    Serial.println("Waiting for NTP time sync: ");
+    time_t now = time(nullptr);
+    while (now < 8 * 3600 * 2) {
+        delay(100);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println();
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    StaticJsonDocument<200> doc;
+    char message[length + 1];
+    memcpy(message, payload, length);
+    message[length] = '\0';
+    
+    Serial.print("Message received: ");
+    Serial.println(message);
+    
+    DeserializationError error = deserializeJson(doc, message);
+    if (error) {
+        Serial.print("deserializeJson() failed: ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    if (doc.containsKey("command") && doc.containsKey("relay")) {
+        String command = doc["command"].as<String>();
+        int relayNum = doc["relay"].as<int>();
+        bool state = doc["state"].as<bool>();
+
+        Serial.print("Command received for relay ");
+        Serial.print(relayNum);
+        Serial.print(": ");
+        Serial.println(state ? "ON" : "OFF");
+
+        // Handle relay control based on relay number
+        if (command == "relay_control") {
+            switch (relayNum) {
+                case 1:
+                    digitalWrite(relay1, state ? HIGH : LOW);
+                    currentState1 = state;
+                    relay_state |= (state ? 0b001 : 0);
+                    Serial.print("Relay 1 set to: ");
+                    Serial.println(state ? "ON" : "OFF");
+                    break;
+                case 2:
+                    digitalWrite(relay2, state ? HIGH : LOW);
+                    currentState1 = state; // Both relay 1&2 share state
+                    relay_state |= (state ? 0b010 : 0);
+                    Serial.print("Relay 2 set to: ");
+                    Serial.println(state ? "ON" : "OFF");
+                    break;
+                case 3:
+                    digitalWrite(relay3, state ? HIGH : LOW);
+                    currentState2 = state;
+                    relay_state |= (state ? 0b100 : 0);
+                    Serial.print("Relay 3 set to: ");
+                    Serial.println(state ? "ON" : "OFF");
+                    break;
+                default:
+                    Serial.println("Invalid relay number");
+                    break;
+            }
+
+            // Publish confirmation of the relay state change
+            StaticJsonDocument<200> response;
+            response["event"] = "relay_update";
+            response["relay"] = relayNum;
+            response["state"] = state;
+            response["timestamp"] = millis();
+
+            String responseStr;
+            serializeJson(response, responseStr);
+            client->publish("humidifier/status", responseStr.c_str());
+        }
+    }
+}
+
+bool reconnectMQTT() {
+    // Loop until we're reconnected
+    int attempts = 0;
+    while (!client->connected() && attempts < 5) {
+        attempts++;
+        Serial.print("Attempting MQTT connection... (");
+        Serial.print(attempts);
+        Serial.print("/5) ");
+        
+        String clientId = deviceId + "-" + String(random(0xffff), HEX);
+        
+        if (client->connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+            Serial.println(" - Connected!");
+            
+            // Subscribe to device-specific command topic
+            client->subscribe(commandTopic.c_str());
+            Serial.print("Subscribed to: ");
+            Serial.println(commandTopic);
+            return true;
+        } else {
+            Serial.print(" - Failed, rc=");
+            Serial.print(client->state());
+            Serial.println(" - Retrying in 5 seconds");
+            delay(5000);
+        }
+    }
+    return false;
+}
+
+void publishSensorData(float humidity, float temp1, float temp2, float pressure1, float pressure2, bool waterDetected, bool heater1State, bool heater2State, bool heater3State) {
+    if (!client->connected()) {
+        Serial.println("Cannot publish - MQTT not connected");
+        return;
+    }
+
+    StaticJsonDocument<512> doc;
+    
+    doc["device_id"] = deviceId;
+    doc["type"] = "data";
+
+    JsonObject data = doc.createNestedObject("data");
+    data["humidity"] = humidity;
+    data["heater_temp"] = temp1;
+    data["final_temp"] = temp2;
+    data["pressure1"] = pressure1;
+    data["pressure2"] = pressure2;
+    data["water_detected"] = waterDetected;
+    data["heater1_state"] = heater1State;
+    data["heater2_state"] = heater2State;
+    data["heater3_state"] = heater3State;
+    data["timestamp"] = millis();
+
+    String output;
+    serializeJson(doc, output);
+    
+    if (client->publish("humidifier/status", output.c_str())) {
+        Serial.println("Publish successful");
+    } else {
+        Serial.println("Publish failed");
+    }
+}
+
+void handleMQTT() {
+    // Check WiFi connection
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi disconnected. Reconnecting...");
+        setupWiFi();
+    }
+
+    // Handle MQTT connection
+    if (!client->connected()) {
+        unsigned long now = millis();
+        if (now - lastReconnectAttempt > reconnectInterval) {
+            lastReconnectAttempt = now;
+            if (reconnectMQTT()) {
+                lastReconnectAttempt = 0;
+            }
+        }
+    } else {
+        client->loop();
+    }
+}

@@ -6,6 +6,11 @@
 #include "pitches.h"
 #include <esp_task_wdt.h>
 #include <functional>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <time.h>
 
 const int thermoDO = 19;
 const int thermoCS1 = 23;
@@ -102,6 +107,9 @@ void setup() {
   // Setup complete message
   displaySetupSummary();
 
+  // Initialize MQTT
+  setupMQTT();
+
   // Set up interrupt for water sensor
   attachInterrupt(digitalPinToInterrupt(LiqSensorPin), waterSensorInterrupt, CHANGE);
   delay(500);
@@ -175,6 +183,36 @@ void updateSystemState() {
     currentSystemState = AIRFLOW_WARNING;
   } else {
     currentSystemState = NORMAL_OPERATION;
+  }
+}
+
+void updateWaterSensorReading() {
+  unsigned long currentTime = millis();
+  
+  // Check water sensor more frequently than other sensors
+  if (currentTime - lastWaterSensorCheck >= WATER_SENSOR_CHECK_INTERVAL) {
+    
+    // Read the sensor directly (like in original code)
+    bool currentReading = digitalRead(LiqSensorPin) == LOW;
+    
+    // Debounce the reading by checking twice with a small delay
+    delay(10);
+    bool confirmedReading = digitalRead(LiqSensorPin) == LOW;
+    
+    // Only update if both readings match (debouncing)
+    if (currentReading == confirmedReading) {
+      waterDetected = confirmedReading;
+      digitalWrite(ledPin, waterDetected ? HIGH : LOW);
+      
+      // Reset timer if water is detected (like in original)
+      if (waterDetected) {
+        waterTimerRunning = false;
+        waterNotDetectedStartTime = 0;
+        finalWarningSent = false;
+      }
+    }
+    
+    lastWaterSensorCheck = currentTime;
   }
 }
 
@@ -448,6 +486,8 @@ void displayNormalCycle() {
 
 void loop() {
   esp_task_wdt_reset(); // Reset watchdog
+
+  updateWaterSensorReading();
   
   // Update sensors efficiently
   updateSensorsIfNeeded();
@@ -463,7 +503,24 @@ void loop() {
   handleTemperatureControl();
   handleBuzzerAlerts();
   handleLcdDisplay();
-  
+  handleMQTT();
+
+  // Publish sensor data periodically
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastPublishMillis >= publishInterval) {
+    lastPublishMillis = currentMillis;
+    publishSensorData(
+      getHumidity(),
+      getThermocouple1(),
+      getThermocouple2(),
+      getPressure1(),
+      getPressure2(),
+      waterDetected,
+      currentState1,
+      currentState1, // Both heater 1&2 use the same state
+      currentState2  // Heater 3
+    );
+  }
   // Optional: Add small delay to prevent overwhelming the system
   delay(10);
 }
