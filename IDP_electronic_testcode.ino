@@ -178,36 +178,6 @@ void updateSystemState() {
   }
 }
 
-void updateWaterSensorReading() {
-  unsigned long currentTime = millis();
-  
-  // Check water sensor more frequently than other sensors
-  if (currentTime - lastWaterSensorCheck >= WATER_SENSOR_CHECK_INTERVAL) {
-    
-    // Read the sensor directly (like in original code)
-    bool currentReading = digitalRead(LiqSensorPin) == LOW;
-    
-    // Debounce the reading by checking twice with a small delay
-    delay(10);
-    bool confirmedReading = digitalRead(LiqSensorPin) == LOW;
-    
-    // Only update if both readings match (debouncing)
-    if (currentReading == confirmedReading) {
-      waterDetected = confirmedReading;
-      digitalWrite(ledPin, waterDetected ? HIGH : LOW);
-      
-      // Reset timer if water is detected (like in original)
-      if (waterDetected) {
-        waterTimerRunning = false;
-        waterNotDetectedStartTime = 0;
-        finalWarningSent = false;
-      }
-    }
-    
-    lastWaterSensorCheck = currentTime;
-  }
-}
-
 void handleWaterSafety() {
   if (!waterDetected) {
     if (!waterTimerRunning) {
@@ -478,8 +448,6 @@ void displayNormalCycle() {
 
 void loop() {
   esp_task_wdt_reset(); // Reset watchdog
-
-  updateWaterSensorReading();
   
   // Update sensors efficiently
   updateSensorsIfNeeded();
