@@ -151,11 +151,7 @@ void setDateTime() {
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     
     Serial.println("Waiting for NTP time sync: ");
-    
-    // Set maximum wait time for NTP sync (15 seconds)
-    const unsigned long NTP_TIMEOUT = 15000;
-    unsigned long startAttempt = millis();
-    
+        
     time_t now = time(nullptr);
     while (now < 8 * 3600 * 2) {
         esp_task_wdt_reset();  // Reset watchdog each iteration
@@ -163,14 +159,8 @@ void setDateTime() {
         delay(100);
         Serial.print(".");
         now = time(nullptr);
-        
-        // Check if we've exceeded the timeout
-        if (millis() - startAttempt > NTP_TIMEOUT) {
-            Serial.println("\nNTP sync timeout - continuing without sync");
-            break;
-        }
     }
-    Serial.println();
+    Serial.println("NTP time sync successful.");
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
