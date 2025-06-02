@@ -7,8 +7,8 @@
 #include <time.h>
 
 // WiFi credentials
-const char* ssid = "RC-LAPTOP 0435";
-const char* password = "1234567890";
+const char* ssid = "HLWONG 1575";
+const char* password = "1Rw5@840";
 
 // MQTT Broker settings
 const char* mqtt_server = "5e44e2f2818640afae596ca821517f0e.s1.eu.hivemq.cloud";
@@ -137,6 +137,7 @@ void setupWiFi() {
 
     // Wait for connection
     while (WiFi.status() != WL_CONNECTED) {
+        esp_task_wdt_reset();  // Reset watchdog
         delay(500);
         Serial.print(".");
     }
@@ -150,11 +151,24 @@ void setDateTime() {
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     
     Serial.println("Waiting for NTP time sync: ");
+    
+    // Set maximum wait time for NTP sync (15 seconds)
+    const unsigned long NTP_TIMEOUT = 15000;
+    unsigned long startAttempt = millis();
+    
     time_t now = time(nullptr);
     while (now < 8 * 3600 * 2) {
+        esp_task_wdt_reset();  // Reset watchdog each iteration
+        
         delay(100);
         Serial.print(".");
         now = time(nullptr);
+        
+        // Check if we've exceeded the timeout
+        if (millis() - startAttempt > NTP_TIMEOUT) {
+            Serial.println("\nNTP sync timeout - continuing without sync");
+            break;
+        }
     }
     Serial.println();
 }
@@ -248,6 +262,7 @@ bool reconnectMQTT() {
         Serial.print("Attempting MQTT connection... (");
         Serial.print(attempts);
         Serial.print("/5) ");
+        esp_task_wdt_reset();
         
         String clientId = deviceId + "-" + String(random(0xffff), HEX);
         
