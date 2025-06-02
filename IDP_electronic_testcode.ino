@@ -95,7 +95,7 @@
     if (wdt_status == ESP_ERR_NOT_FOUND) {
         // Watchdog not initialized, safe to initialize
         esp_task_wdt_config_t config = {
-            .timeout_ms = 60000,  // 30 seconds
+            .timeout_ms = 30000,  // 30 seconds
             .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
             .trigger_panic = true
         };
