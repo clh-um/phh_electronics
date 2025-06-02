@@ -21,9 +21,9 @@
   const int lcdRows = 2;
   const int LiqSensorPin = 33; 
   const int ledPin = 32;        // for testing only
-  const int relay1 = 25;
+  const int relay1 = 14;
   const int relay2 = 12;
-  const int relay3 = 14;
+  const int relay3 = 25;
   const int buzzer = 27;
 
   #define DHTPIN 4
