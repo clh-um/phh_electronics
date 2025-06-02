@@ -32,7 +32,7 @@
 
   // Configuration constants
   struct Config {
-    static constexpr float TEMP_THRESHOLD = 32.50;
+    static constexpr float TEMP_THRESHOLD = 34.00;
     static constexpr float PRESSURE_THRESHOLD = 0.05;
     static constexpr unsigned long WATER_TIMEOUT = 10UL * 60UL * 1000UL;
     static constexpr unsigned long LCD_INTERVAL = 2000;
