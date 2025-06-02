@@ -1,4 +1,5 @@
 #include "max6675.h"
+#include "mqtt_timing.h"
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include "DHT.h"
@@ -476,20 +477,21 @@ void loop() {
 
   // Publish sensor data periodically
   unsigned long currentMillis = millis();
-  if (currentMillis - lastPublishMillis >= publishInterval) {
-    lastPublishMillis = currentMillis;
-    publishSensorData(
-      getHumidity(),
-      getThermocouple1(),
-      getThermocouple2(),
-      getPressure1(),
-      getPressure2(),
-      waterDetected,
-      currentState1,
-      currentState1, // Both heater 1&2 use the same state
-      currentState2  // Heater 3
-    );
-  }
+    if (currentMillis - lastPublishMillis >= publishInterval) {
+        lastPublishMillis = currentMillis;
+        
+          publishSensorData(
+          getThermocouple1(),     // heater_temp
+          getThermocouple2(),     // final_temp
+          getHumidity(),          // humidity
+          getPressure1(),         // pressure1
+          getPressure2(),         // pressure2
+          waterDetected,          // water_detected
+          currentState1,          // heater1_state (relay1)
+          currentState1,          // heater2_state (relay2)
+          currentState2           // heater3_state (relay3)
+        );
+    }
   // Optional: Add small delay to prevent overwhelming the system
   delay(10);
 }

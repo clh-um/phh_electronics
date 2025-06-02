@@ -3,6 +3,8 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
+#include <time.h>
 
 // WiFi credentials
 const char* ssid = "RC-LAPTOP 0435";
@@ -46,8 +48,8 @@ PubSubClient* client;
 // MQTT connection status tracking
 unsigned long lastReconnectAttempt = 0;
 const unsigned long reconnectInterval = 5000; // 5 seconds between attempts
-unsigned long lastPublishMillis = 0;
-const unsigned long publishInterval = 5000;  // Publish data every 5 seconds
+extern unsigned long lastPublishMillis;
+extern const unsigned long publishInterval;
 
 // Device ID related constants
 const int EEPROM_SIZE = 512;
@@ -158,7 +160,7 @@ void setDateTime() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    StaticJsonDocument<200> doc;
+    JsonDocument doc;  // Changed from DynamicJsonDocument
     char message[length + 1];
     memcpy(message, payload, length);
     message[length] = '\0';
@@ -173,7 +175,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         return;
     }
 
-    if (doc.containsKey("command") && doc.containsKey("relay")) {
+    if (doc["command"].is<const char*>() && doc["relay"].is<int>()) {
         String command = doc["command"].as<String>();
         int relayNum = doc["relay"].as<int>();
         bool state = doc["state"].as<bool>();
@@ -188,40 +190,52 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             switch (relayNum) {
                 case 1:
                     digitalWrite(relay1, state ? HIGH : LOW);
-                    currentState1 = state;
-                    relay_state |= (state ? 0b001 : 0);
-                    Serial.print("Relay 1 set to: ");
-                    Serial.println(state ? "ON" : "OFF");
+                    currentState1 = state;  // This affects both heater1 and heater2
                     break;
                 case 2:
                     digitalWrite(relay2, state ? HIGH : LOW);
-                    currentState1 = state; // Both relay 1&2 share state
-                    relay_state |= (state ? 0b010 : 0);
-                    Serial.print("Relay 2 set to: ");
-                    Serial.println(state ? "ON" : "OFF");
+                    currentState1 = state;  // This affects both heater1 and heater2
                     break;
                 case 3:
                     digitalWrite(relay3, state ? HIGH : LOW);
-                    currentState2 = state;
-                    relay_state |= (state ? 0b100 : 0);
-                    Serial.print("Relay 3 set to: ");
-                    Serial.println(state ? "ON" : "OFF");
+                    currentState2 = state;  // This affects heater3
                     break;
                 default:
                     Serial.println("Invalid relay number");
                     break;
             }
 
-            // Publish confirmation of the relay state change
-            StaticJsonDocument<200> response;
-            response["event"] = "relay_update";
-            response["relay"] = relayNum;
-            response["state"] = state;
-            response["timestamp"] = millis();
+            // Publish status update with new structure
+            publishSensorData(
+                getThermocouple1(),     // heater_temp
+                getThermocouple2(),     // final_temp
+                getHumidity(),          // humidity
+                getPressure1(),         // pressure1
+                getPressure2(),         // pressure2
+                waterDetected,          // water_detected
+                currentState1,          // heater1_state (relay1)
+                currentState1,          // heater2_state (relay2)
+                currentState2           // heater3_state (relay3)
+            );
+
+            // Send confirmation message
+            JsonDocument response;  // Changed from DynamicJsonDocument
+            response["device_id"] = deviceId;
+            response["type"] = "response";
+            
+            // Updated way to create nested object
+            response["data"].to<JsonObject>();
+            response["data"]["command"] = "relay_control";
+            response["data"]["relay"] = relayNum;
+            response["data"]["success"] = true;
+            response["data"]["heater1_state"] = currentState1;
+            response["data"]["heater2_state"] = currentState1;
+            response["data"]["heater3_state"] = currentState2;
+            response["data"]["timestamp"] = millis();
 
             String responseStr;
             serializeJson(response, responseStr);
-            client->publish("humidifier/status", responseStr.c_str());
+            client->publish((deviceTopic + "/response").c_str(), responseStr.c_str());
         }
     }
 }
@@ -255,34 +269,36 @@ bool reconnectMQTT() {
     return false;
 }
 
-void publishSensorData(float humidity, float temp1, float temp2, float pressure1, float pressure2, bool waterDetected, bool heater1State, bool heater2State, bool heater3State) {
+void publishSensorData(float heater_temp, float final_temp, float humidity, float pressure1, float pressure2, bool waterDetected, bool heater1State, bool heater2State, bool heater3State) {
     if (!client->connected()) {
         Serial.println("Cannot publish - MQTT not connected");
         return;
     }
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;  // Changed from DynamicJsonDocument
     
     doc["device_id"] = deviceId;
     doc["type"] = "data";
 
-    JsonObject data = doc.createNestedObject("data");
-    data["humidity"] = humidity;
-    data["heater_temp"] = temp1;
-    data["final_temp"] = temp2;
-    data["pressure1"] = pressure1;
-    data["pressure2"] = pressure2;
-    data["water_detected"] = waterDetected;
-    data["heater1_state"] = heater1State;
-    data["heater2_state"] = heater2State;
-    data["heater3_state"] = heater3State;
-    data["timestamp"] = millis();
+    // Updated way to create nested object
+    doc["data"].to<JsonObject>();
+    doc["data"]["humidity"] = humidity;
+    doc["data"]["heater_temp"] = heater_temp;
+    doc["data"]["final_temp"] = final_temp;
+    doc["data"]["pressure1"] = pressure1;
+    doc["data"]["pressure2"] = pressure2;
+    doc["data"]["water_detected"] = waterDetected;
+    doc["data"]["heater1_state"] = heater1State;
+    doc["data"]["heater2_state"] = heater2State;
+    doc["data"]["heater3_state"] = heater3State;
+    doc["data"]["timestamp"] = millis();
 
     String output;
     serializeJson(doc, output);
     
-    if (client->publish("humidifier/status", output.c_str())) {
+    if (client->publish(deviceTopic.c_str(), output.c_str())) {
         Serial.println("Publish successful");
+        Serial.println(output);
     } else {
         Serial.println("Publish failed");
     }
