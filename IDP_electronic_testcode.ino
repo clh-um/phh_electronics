@@ -12,6 +12,7 @@
   #include <PubSubClient.h>
   #include <ArduinoJson.h>
   #include <time.h>
+  #include "DeviceID.h"
 
   const int thermoDO = 19;
   const int thermoCS1 = 23;
@@ -63,6 +64,7 @@
   bool previousState2 = false, currentState2 = false;
   unsigned long lastWaterSensorCheck = 0;
   const unsigned long WATER_SENSOR_CHECK_INTERVAL = 100; // Check every 100ms
+  phh::device::DeviceID deviceId;//Device ID
 
   // System states for better organization
   enum SystemState {
@@ -107,6 +109,8 @@
         esp_task_wdt_add(NULL);
         Serial.println("Watchdog already initialized, task added");
     }
+
+    randomSeed(analogRead(0));
 
     // Initialize hardware
     initializeHardware();
@@ -429,51 +433,57 @@
     switch (lcdState) {
       case 0:
         lcd.setCursor(0, 0);
+        lcd.print("Device ID:");
+        lcd.setCursor(0, 1);
+        lcd.print(deviceId.get());
+        break;
+      case 1:
+        lcd.setCursor(0, 0);
         lcd.print("Humidity:");
         lcd.setCursor(0, 1);
         lcd.print(h >= 0 ? h : 0);
         lcd.print("%");
         break;
-      case 1:
+      case 2:
         lcd.setCursor(0, 0);
         lcd.print("Heater Temp:");
         lcd.setCursor(0, 1);
         lcd.print(Tt1 != -999.0 ? Tt1 : 0);
         lcd.print("*C");
         break;
-      case 2:
+      case 3:
         lcd.setCursor(0, 0);
         lcd.print("Final Temp:");
         lcd.setCursor(0, 1);
         lcd.print(Tt2 != -999.0 ? Tt2 : 0);
         lcd.print("*C");
         break;
-      case 3:
+      case 4:
         lcd.setCursor(0, 0);
         lcd.print("Heater 1 & 2:");
         lcd.setCursor(0, 1);
         lcd.print(h1Status);
         break;
-      case 4:
+      case 5:
         lcd.setCursor(0, 0);
         lcd.print("Heater 3:");
         lcd.setCursor(0, 1);
         lcd.print(h3Status);
         break;
-      case 5:
+      case 6:
         lcd.setCursor(0, 0);
         lcd.print("Air Flow:");
         lcd.setCursor(0, 1);
         lcd.print(airFlowStatus ? "Flowing" : "Not Flowing");
         break;
-      case 6:
+      case 7:
         lcd.setCursor(0, 0);
         lcd.print("Water Level");
         lcd.setCursor(0, 1);
         lcd.print(waterDetected ? "Detected" : "Not Detected");
         break;
     }
-    lcdState = (lcdState + 1) % 7;
+    lcdState = (lcdState + 1) % 8;
   }
 
   void loop() {

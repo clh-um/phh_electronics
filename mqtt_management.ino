@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 #include <time.h>
+#include "DeviceID.h"
 
 // WiFi credentials
 const char* ssid = "HLWONG 1575";
@@ -60,45 +61,8 @@ const int DEVICE_ID_LENGTH = 10;  // Including prefix and 5 char random ID
 // MQTT topics
 String deviceTopic;        // Will be set after device ID generation
 String commandTopic;       // Will be set after device ID generation
-String deviceId;
+extern phh::device::DeviceID deviceId;
 
-// Generate or retrieve device ID
-String generateDeviceId() {
-    EEPROM.begin(EEPROM_SIZE);
-    
-    // Try to read existing device ID from EEPROM
-    String savedId = "";
-    for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
-        char c = EEPROM.read(DEVICE_ID_ADDRESS + i);
-        if (c != 0 && c != 255) { // Valid character
-            savedId += c;
-        }
-    }
-    
-    // If valid device ID exists, use it
-    if (savedId.length() == DEVICE_ID_LENGTH && savedId.startsWith(DEVICE_PREFIX)) {
-        EEPROM.end();
-        return savedId;
-    }
-    
-    // Generate new device ID
-    String newId = DEVICE_PREFIX;
-    const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    
-    // Generate 5 random characters
-    for (int i = 0; i < 5; i++) {
-        newId += charset[random(0, strlen(charset))];
-    }
-    
-    // Save to EEPROM
-    for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
-        EEPROM.write(DEVICE_ID_ADDRESS + i, newId[i]);
-    }
-    EEPROM.commit();
-    EEPROM.end();
-    
-    return newId;
-}
 
 void setupMQTT() {
     // Setup WiFi
@@ -106,13 +70,19 @@ void setupMQTT() {
     setDateTime();
 
     // Generate or retrieve device ID
-    deviceId = generateDeviceId();
+    // Initialize device ID
+    if (!deviceId.initialize()) {
+        #ifdef DEBUG
+        Serial.println(F("Failed to initialize device ID!"));
+        #endif
+        // Handle initialization failure
+    }
     Serial.print("Device ID: ");
-    Serial.println(deviceId);
+    Serial.println(deviceId.get());
     
     // Set up MQTT topics with device ID
-    deviceTopic = "device/" + deviceId + "/data";
-    commandTopic = "device/" + deviceId + "/command";
+    deviceTopic = "device/" + String(deviceId.get()) + "/data";
+    commandTopic = "device/" + String(deviceId.get()) + "/command";
 
     // Configure secure client
     espClient.setCACert(root_ca);
@@ -224,7 +194,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
             // Send confirmation message
             JsonDocument response;  // Changed from DynamicJsonDocument
-            response["device_id"] = deviceId;
+            response["device_id"] = deviceId.get();
             response["type"] = "response";
             
             // Updated way to create nested object
@@ -254,7 +224,7 @@ bool reconnectMQTT() {
         Serial.print("/5) ");
         esp_task_wdt_reset();
         
-        String clientId = deviceId + "-" + String(random(0xffff), HEX);
+        String clientId = String(deviceId.get()) + "-" + String(random(0xffff), HEX);
         
         if (client->connect(clientId.c_str(), mqtt_username, mqtt_password)) {
             Serial.println(" - Connected!");
@@ -282,7 +252,7 @@ void publishSensorData(float heater_temp, float final_temp, float humidity, floa
 
     JsonDocument doc;  // Changed from DynamicJsonDocument
     
-    doc["device_id"] = deviceId;
+    doc["device_id"] = deviceId.get();
     doc["type"] = "data";
 
     // Updated way to create nested object
