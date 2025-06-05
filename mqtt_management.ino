@@ -44,7 +44,7 @@ R9I4LtD+gdwyah617jzV/OeBHRnDJELqYzmp
 
 // MQTT client
 WiFiClientSecure espClient;
-PubSubClient* client;
+PubSubClient client(espClient);  // Stack allocation
 
 // MQTT connection status tracking
 unsigned long lastReconnectAttempt = 0;
@@ -59,8 +59,8 @@ const char* DEVICE_PREFIX = "HUM-";
 const int DEVICE_ID_LENGTH = 10;  // Including prefix and 5 char random ID
 
 // MQTT topics
-String deviceTopic;        // Will be set after device ID generation
-String commandTopic;       // Will be set after device ID generation
+char deviceTopic[64];        // Will be set after device ID generation
+char commandTopic[64];       // Will be set after device ID generation
 extern phh::device::DeviceID deviceId;
 
 
@@ -81,18 +81,17 @@ void setupMQTT() {
     Serial.println(deviceId.get());
     
     // Set up MQTT topics with device ID
-    deviceTopic = "device/" + String(deviceId.get()) + "/data";
-    commandTopic = "device/" + String(deviceId.get()) + "/command";
+    snprintf(deviceTopic, sizeof(deviceTopic), "device/%s/data", deviceId.get());
+    snprintf(commandTopic, sizeof(commandTopic), "device/%s/command", deviceId.get());
 
     // Configure secure client
     espClient.setCACert(root_ca);
     espClient.setInsecure(); // Try this if certificate validation fails
 
     // Initialize MQTT client
-    client = new PubSubClient(espClient);
-    client->setServer(mqtt_server, mqtt_port);
-    client->setCallback(mqttCallback);
-    client->setBufferSize(1024);
+    client.setServer(mqtt_server, mqtt_port);
+    client.setCallback(mqttCallback);
+    client.setBufferSize(1024);
 }
 
 void setupWiFi() {
@@ -209,7 +208,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
             String responseStr;
             serializeJson(response, responseStr);
-            client->publish((deviceTopic + "/response").c_str(), responseStr.c_str());
+            char responseTopic[80];
+            snprintf(responseTopic, sizeof(responseTopic), "%s/response", deviceTopic);
+            client.publish(responseTopic, responseStr.c_str());
         }
     }
 }
@@ -217,7 +218,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 bool reconnectMQTT() {
     // Loop until we're reconnected
     int attempts = 0;
-    while (!client->connected() && attempts < 5) {
+    while (!client.connected() && attempts < 5) {
         attempts++;
         Serial.print("Attempting MQTT connection... (");
         Serial.print(attempts);
@@ -226,17 +227,17 @@ bool reconnectMQTT() {
         
         String clientId = String(deviceId.get()) + "-" + String(random(0xffff), HEX);
         
-        if (client->connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+        if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
             Serial.println(" - Connected!");
             
             // Subscribe to device-specific command topic
-            client->subscribe(commandTopic.c_str());
+            client.subscribe(commandTopic);
             Serial.print("Subscribed to: ");
             Serial.println(commandTopic);
             return true;
         } else {
             Serial.print(" - Failed, rc=");
-            Serial.print(client->state());
+            Serial.print(client.state());
             Serial.println(" - Retrying in 5 seconds");
             delay(5000);
         }
@@ -245,7 +246,7 @@ bool reconnectMQTT() {
 }
 
 void publishSensorData(float heater_temp, float final_temp, float humidity, float pressure1, float pressure2, bool waterDetected, bool heater1State, bool heater2State, bool heater3State) {
-    if (!client->connected()) {
+    if (!client.connected()) {
         Serial.println("Cannot publish - MQTT not connected");
         return;
     }
@@ -271,7 +272,7 @@ void publishSensorData(float heater_temp, float final_temp, float humidity, floa
     String output;
     serializeJson(doc, output);
     
-    if (client->publish(deviceTopic.c_str(), output.c_str())) {
+    if (client.publish(deviceTopic, output.c_str())) {
         Serial.println("Publish successful");
         Serial.println(output);
     } else {
@@ -287,7 +288,7 @@ void handleMQTT() {
     }
 
     // Handle MQTT connection
-    if (!client->connected()) {
+    if (!client.connected()) {
         unsigned long now = millis();
         if (now - lastReconnectAttempt > reconnectInterval) {
             lastReconnectAttempt = now;
@@ -296,6 +297,6 @@ void handleMQTT() {
             }
         }
     } else {
-        client->loop();
+        client.loop();
     }
 }
