@@ -55,6 +55,7 @@ DHT dht(DHTPIN, DHTTYPE);
 unsigned long previousLcdMillis = 0;
 int lcdState = 0;
 volatile bool waterDetected = false;
+volatile bool waterDetectedFlag = false;
 unsigned long waterNotDetectedStartTime = 0;  // Start time when water not detected
 bool finalWarningSent = false;
 bool waterTimerRunning = false;
@@ -85,15 +86,7 @@ enum SystemState {
 SystemState currentSystemState = INITIALIZING;
 
 void IRAM_ATTR waterSensorInterrupt() {
-  waterDetected = digitalRead(LiqSensorPin) == LOW;
-  digitalWrite(ledPin, waterDetected ? HIGH : LOW);
-  
-  // Only reset timer if water is detected AND system is fully initialized
-  if (waterDetected && systemFullyInitialized) {
-    waterTimerRunning = false;      // Reset timer state
-    waterNotDetectedStartTime = 0;  // Reset start time
-    finalWarningSent = false;       // Reset final warning
-  }
+  waterDetectedFlag = true;  // Just set a flag
 }
 
 void setup() {
@@ -103,21 +96,11 @@ void setup() {
   systemStartTime = millis();
 
   // Check if watchdog is already initialized before initializing
-  esp_err_t wdt_status = esp_task_wdt_status(NULL);
-  if (wdt_status == ESP_ERR_NOT_FOUND) {
-      // Watchdog not initialized, safe to initialize
-      esp_task_wdt_config_t config = {
-          .timeout_ms = 30000,  // 30 seconds
-          .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
-          .trigger_panic = true
-      };
-      esp_task_wdt_init(&config);
-      esp_task_wdt_add(NULL);
-      Serial.println("Watchdog initialized");
-  } else {
-      // Watchdog already exists, just add current task
-      esp_task_wdt_add(NULL);
-      Serial.println("Watchdog already initialized, task added");
+  esp_err_t add_result = esp_task_wdt_add(NULL);
+  if (add_result == ESP_OK) {
+      Serial.println("Task added to watchdog");
+  } else if (add_result == ESP_ERR_INVALID_STATE) {
+      Serial.println("Task already added to watchdog");
   }
 
   // Initialize hardware
@@ -226,6 +209,20 @@ void updateSystemState() {
   }
 }
 
+void handleWaterSensorUpdate() {
+    if (waterDetectedFlag) {
+        waterDetectedFlag = false;
+        waterDetected = digitalRead(LiqSensorPin) == LOW;
+        digitalWrite(ledPin, waterDetected ? HIGH : LOW);
+        
+        if (waterDetected && systemFullyInitialized) {
+            waterTimerRunning = false;
+            waterNotDetectedStartTime = 0;
+            finalWarningSent = false;
+        }
+    }
+}
+
 void handleWaterSafety() {
   // Don't handle water safety during initialization
   if (!systemFullyInitialized) {
@@ -305,6 +302,15 @@ void handleTemperatureControl() {
   // Get sensor readings
   float Tt1 = getThermocouple1();
   float Tt2 = getThermocouple2();
+
+  if (isnan(Tt1) || Tt1 < -50 || Tt1 > 150) {
+    // Handle sensor error
+    Tt1 = -999.0;  // Error indicator
+  }
+  if (isnan(Tt2) || Tt2 < -50 || Tt2 > 150) {
+    // Handle sensor error
+    Tt2 = -999.0;  // Error indicator
+  }
   
   // Control heaters based on temperature with safety checks
   if (Tt1 > Config::TEMP_THRESHOLD || Tt1 < 0) { // Include safety check
@@ -552,6 +558,8 @@ void loop() {
   
   // Update sensors efficiently
   updateSensorsIfNeeded();
+
+  handleWaterSensorUpdate();
 
   // Update airflow status first (needed for system state)
   handleAirFlowMonitoring();
