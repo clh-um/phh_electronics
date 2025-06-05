@@ -204,7 +204,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             response["data"]["heater1_state"] = currentState1;
             response["data"]["heater2_state"] = currentState1;
             response["data"]["heater3_state"] = currentState2;
-            response["data"]["timestamp"] = millis();
+            response["data"]["timestamp"] = time(nullptr);
 
             String responseStr;
             serializeJson(response, responseStr);
@@ -267,7 +267,7 @@ void publishSensorData(float heater_temp, float final_temp, float humidity, floa
     doc["data"]["heater1_state"] = heater1State;
     doc["data"]["heater2_state"] = heater2State;
     doc["data"]["heater3_state"] = heater3State;
-    doc["data"]["timestamp"] = millis();
+    doc["data"]["timestamp"] = time(nullptr);
 
     String output;
     serializeJson(doc, output);
