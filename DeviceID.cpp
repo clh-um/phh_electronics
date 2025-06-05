@@ -62,10 +62,10 @@ bool DeviceID::generateNew() {
     deviceId[ID_LENGTH] = '\0';
 
     // Save to EEPROM
-    EEPROM.begin(EEPROM_SIZE);
-    for (uint8_t i = 0; i <= ID_LENGTH; i++) {
+    for (uint8_t i = 0; i < ID_LENGTH; i++) {  // Use < instead of <=
         EEPROM.write(ID_ADDRESS + i, deviceId[i]);
     }
+    EEPROM.write(ID_ADDRESS + ID_LENGTH, '\0');  // Explicitly write null terminator
     EEPROM.commit();
     EEPROM.end();
 
