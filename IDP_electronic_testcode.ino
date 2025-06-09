@@ -12,11 +12,11 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
-#include "DeviceID.h"  // Make sure this include is here
+#include "DeviceID.h" 
 
 const int thermoDO = 19;
 const int thermoCS1 = 23;
-const int thermoCS2 = 26;
+const int thermoCS2 = 25;
 const int thermoCLK = 5;
 const int lcdColumns = 16;
 const int lcdRows = 2;
@@ -24,7 +24,7 @@ const int LiqSensorPin = 33;
 const int ledPin = 32;        // for testing only
 const int relay1 = 14;
 const int relay2 = 12;
-const int relay3 = 25;
+const int relay3 = 26;
 const int buzzer = 27;
 
 #define DHTPIN 4
@@ -74,7 +74,7 @@ bool systemFullyInitialized = false;
 
 // System states for better organization
 enum SystemState {
-  INITIALIZING,      // NEW: Added initialization state
+  INITIALIZING,
   NORMAL_OPERATION,
   WATER_WARNING,
   WATER_CRITICAL,
@@ -594,6 +594,6 @@ void loop() {
     }
   }
   
-  // Optional: Add small delay to prevent overwhelming the system
+  // Add small delay to prevent overwhelming the system
   delay(10);
 }
