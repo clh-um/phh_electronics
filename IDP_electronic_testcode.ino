@@ -33,8 +33,8 @@ const int buzzer = 27;
 
 // Configuration constants
 struct Config {
-  static constexpr float TEMP_THRESHOLD = 34.00;
-  static constexpr float PRESSURE_THRESHOLD = 0.05;
+  static constexpr float TEMP_THRESHOLD = 33.00;
+  static constexpr float PRESSURE_THRESHOLD = 0.025;
   static constexpr unsigned long WATER_TIMEOUT = 10UL * 60UL * 1000UL;
   static constexpr unsigned long LCD_INTERVAL = 2000;
   static constexpr unsigned long SENSOR_INTERVAL = 2000;
@@ -67,6 +67,9 @@ bool previousState2 = false, currentState2 = false;
 unsigned long lastWaterSensorCheck = 0;
 const unsigned long WATER_SENSOR_CHECK_INTERVAL = 100; // Check every 100ms
 phh::device::DeviceID deviceId; // Keep the original DeviceID class
+bool lastAirFlowStatus = false;
+unsigned long airFlowLostStartTime = 0;
+const unsigned long AIR_FLOW_LOST_CONFIRMATION_TIME = 3000;
 
 // NEW: System initialization tracking
 unsigned long systemStartTime = 0;
@@ -336,12 +339,27 @@ void handleAirFlowMonitoring() {
   float BME1p = getPressure1();
   float BME2p = getPressure2();
   
+  bool currentMeasuredAirFlow = false;
   // Only calculate if both sensors are working
   if (BME1p > 0 && BME2p > 0) {
     float pressureDiff = abs(BME2p - BME1p);
-    airFlowStatus = (pressureDiff > Config::PRESSURE_THRESHOLD);
+    currentMeasuredAirFlow = (pressureDiff > Config::PRESSURE_THRESHOLD);
+  }
+
+  // Airflow lost confirmation logic
+  if (currentMeasuredAirFlow) {
+    // Air is flowing, reset timer and state immediately
+    airFlowStatus = true;
+    airFlowLostStartTime = 0;
   } else {
-    airFlowStatus = false; // Assume no airflow if sensors fail
+    // No airflow detected
+    if (airFlowLostStartTime == 0) {
+      airFlowLostStartTime = millis();
+    } else if (millis() - airFlowLostStartTime >= AIR_FLOW_LOST_CONFIRMATION_TIME) {
+      airFlowStatus = false;
+    }
+    // If not yet 3 seconds, keep previous airFlowStatus (don't change to false yet)
+    // So, do not set airFlowStatus = false until time is up
   }
 }
 
