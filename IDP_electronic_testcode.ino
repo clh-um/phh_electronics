@@ -21,7 +21,6 @@ const int thermoCLK = 5;
 const int lcdColumns = 16;
 const int lcdRows = 2;
 const int LiqSensorPin = 33; 
-const int ledPin = 32;        // for testing only
 const int relay1 = 14;
 const int relay2 = 12;
 const int relay3 = 26;
@@ -33,7 +32,8 @@ const int buzzer = 27;
 
 // Configuration constants
 struct Config {
-  static constexpr float TEMP_THRESHOLD = 33.00;
+  static constexpr float TEMP_THRESHOLD1 = 34.50;
+  static constexpr float TEMP_THRESHOLD2 = 33.00;
   static constexpr float PRESSURE_THRESHOLD = 0.025;
   static constexpr unsigned long WATER_TIMEOUT = 10UL * 60UL * 1000UL;
   static constexpr unsigned long LCD_INTERVAL = 2000;
@@ -70,6 +70,19 @@ phh::device::DeviceID deviceId; // Keep the original DeviceID class
 bool lastAirFlowStatus = false;
 unsigned long airFlowLostStartTime = 0;
 const unsigned long AIR_FLOW_LOST_CONFIRMATION_TIME = 3000;
+
+// NEW: Airflow monitoring with single sensor
+float previousPressure = 0.0;
+unsigned long lastPressureTime = 0;
+const unsigned long PRESSURE_SAMPLE_INTERVAL = 500; // 0.5 second in milliseconds
+
+// NEW: Relay state tracking for sensor pause
+bool lastRelay1State = false;
+bool lastRelay2State = false;
+bool lastRelay3State = false;
+unsigned long relayChangeTime = 0;
+const unsigned long SENSOR_PAUSE_DURATION = 1500; // 1.5 seconds in milliseconds
+bool sensorsPaused = false;
 
 // NEW: System initialization tracking
 unsigned long systemStartTime = 0;
@@ -125,6 +138,11 @@ void setup() {
   // Read initial water sensor state but DON'T start timer yet
   waterDetected = digitalRead(LiqSensorPin) == LOW;
   
+  // Initialize relay states
+  lastRelay1State = digitalRead(relay1);
+  lastRelay2State = digitalRead(relay2);
+  lastRelay3State = digitalRead(relay3);
+  
   Serial.println("-- Smart Prefilled Humidifier Heater System Ready --");
   Serial.println("-- Starting 30-second initialization grace period --");
 }
@@ -134,7 +152,6 @@ void initializeHardware() {
   lcd.backlight();
   
   pinMode(LiqSensorPin, INPUT);
-  pinMode(ledPin, OUTPUT);
   pinMode(relay1, OUTPUT);
   pinMode(relay2, OUTPUT);
   pinMode(relay3, OUTPUT);
@@ -179,6 +196,36 @@ void displaySetupSummary() {
   delay(1000);
 }
 
+// NEW: Function to check for relay state changes
+void checkRelayStateChanges() {
+  bool currentRelay1State = digitalRead(relay1);
+  bool currentRelay2State = digitalRead(relay2);
+  bool currentRelay3State = digitalRead(relay3);
+  
+  // Check if any relay state has changed
+  if (currentRelay1State != lastRelay1State || 
+      currentRelay2State != lastRelay2State || 
+      currentRelay3State != lastRelay3State) {
+    
+    // Record the time of relay change
+    relayChangeTime = millis();
+    sensorsPaused = true;
+    
+    Serial.println("Relay state change detected - pausing sensor readings for 1.5 seconds");
+    
+    // Update last known states
+    lastRelay1State = currentRelay1State;
+    lastRelay2State = currentRelay2State;
+    lastRelay3State = currentRelay3State;
+  }
+  
+  // Check if pause duration has elapsed
+  if (sensorsPaused && (millis() - relayChangeTime >= SENSOR_PAUSE_DURATION)) {
+    sensorsPaused = false;
+    Serial.println("Sensor readings resumed after relay switching pause");
+  }
+}
+
 void updateSystemState() {
   // Check if we're still in initialization period
   if (!systemFullyInitialized) {
@@ -203,27 +250,26 @@ void updateSystemState() {
     currentSystemState = SENSOR_ERROR;
   } else if (!waterDetected && finalWarningSent) {
     currentSystemState = EMERGENCY_SHUTDOWN;
-  } else if (!waterDetected) {
-    currentSystemState = WATER_WARNING;
   } else if (!airFlowStatus) {
     currentSystemState = AIRFLOW_WARNING;
+  } else if (!waterDetected) {
+    currentSystemState = WATER_WARNING;
   } else {
     currentSystemState = NORMAL_OPERATION;
   }
 }
 
 void handleWaterSensorUpdate() {
-    if (waterDetectedFlag) {
-        waterDetectedFlag = false;
-        waterDetected = digitalRead(LiqSensorPin) == LOW;
-        digitalWrite(ledPin, waterDetected ? HIGH : LOW);
-        
-        if (waterDetected && systemFullyInitialized) {
-            waterTimerRunning = false;
-            waterNotDetectedStartTime = 0;
-            finalWarningSent = false;
-        }
+  if (waterDetectedFlag) {
+    waterDetectedFlag = false;
+    waterDetected = digitalRead(LiqSensorPin) == LOW;
+      
+    if (waterDetected && systemFullyInitialized) {
+      waterTimerRunning = false;
+      waterNotDetectedStartTime = 0;
+      finalWarningSent = false;
     }
+  }
 }
 
 void handleWaterSafety() {
@@ -259,25 +305,25 @@ void playFinalWarning() {
   unsigned long currentMillis = millis();
   
   if (currentMillis - lastBuzzerChange >= 500) {
-      lastBuzzerChange = currentMillis;
-      
-      if (buzzerState % 2 == 0) {
-          tone(buzzer, NOTE_B7);
-      } else {
-          noTone(buzzer);
+    lastBuzzerChange = currentMillis;
+    
+    if (buzzerState % 2 == 0) {
+        tone(buzzer, NOTE_B7);
+    } else {
+        noTone(buzzer);
+    }
+    
+    buzzerState++;
+    if (buzzerState >= 10) {  // 5 complete cycles (on/off)
+      buzzerState = 0;
+      warningCount++;
+      if (warningCount >= 3) {  // Repeat 3 times
+        warningCount = 0;
+        return;
       }
-      
-      buzzerState++;
-      if (buzzerState >= 10) {  // 5 complete cycles (on/off)
-          buzzerState = 0;
-          warningCount++;
-          if (warningCount >= 3) {  // Repeat 3 times
-              warningCount = 0;
-              return;
-          }
-      }
-      
-      esp_task_wdt_reset();  // Reset watchdog
+    }
+    
+    esp_task_wdt_reset();  // Reset watchdog
   }
 }
 
@@ -316,7 +362,7 @@ void handleTemperatureControl() {
   }
   
   // Control heaters based on temperature with safety checks
-  if (Tt1 > Config::TEMP_THRESHOLD || Tt1 < 0) { // Include safety check
+  if (Tt1 > Config::TEMP_THRESHOLD1 || Tt1 < 0) { // Include safety check
     digitalWrite(relay1, LOW);
     digitalWrite(relay2, LOW);
     currentState1 = false;
@@ -326,7 +372,7 @@ void handleTemperatureControl() {
     currentState1 = true;
   }
 
-  if (Tt2 > Config::TEMP_THRESHOLD || Tt2 < 0) { // Include safety check
+  if (Tt2 > Config::TEMP_THRESHOLD2 || Tt2 < 0) { // Include safety check
     digitalWrite(relay3, LOW);
     currentState2 = false;
   } else {
@@ -336,31 +382,44 @@ void handleTemperatureControl() {
 }
 
 void handleAirFlowMonitoring() {
-  float BME1p = getPressure1();
-  float BME2p = getPressure2();
+  float currentPressure = getPressure2(); // Only use BME2 sensor
+  unsigned long currentTime = millis();
   
   bool currentMeasuredAirFlow = false;
-  // Only calculate if both sensors are working
-  if (BME1p > 0 && BME2p > 0) {
-    float pressureDiff = abs(BME2p - BME1p);
-    currentMeasuredAirFlow = (pressureDiff > Config::PRESSURE_THRESHOLD);
-  }
-
-  // Airflow lost confirmation logic
-  if (currentMeasuredAirFlow) {
-    // Air is flowing, reset timer and state immediately
-    airFlowStatus = true;
-    airFlowLostStartTime = 0;
-  } else {
-    // No airflow detected
-    if (airFlowLostStartTime == 0) {
-      airFlowLostStartTime = millis();
-    } else if (millis() - airFlowLostStartTime >= AIR_FLOW_LOST_CONFIRMATION_TIME) {
-      airFlowStatus = false;
+  
+  // Only calculate if sensor is working and we have a previous reading
+  if (currentPressure > 0) {
+    // Check if enough time has passed for pressure comparison (0.5 second)
+    if (currentTime - lastPressureTime >= PRESSURE_SAMPLE_INTERVAL && previousPressure > 0) {
+      float pressureDiff = currentPressure - previousPressure;
+      
+      // Air is flowing if pressure difference is more than 1 Pa
+      // Air is not flowing if pressure difference is less than -1 Pa
+      if (pressureDiff > 1.0) {
+        currentMeasuredAirFlow = true;
+      } else if (pressureDiff < -1.0) {
+        currentMeasuredAirFlow = false;
+      } else {
+        // Pressure difference is between -1 and 1 Pa, keep previous state
+        // This prevents rapid switching due to small fluctuations
+        currentMeasuredAirFlow = airFlowStatus;
+      }
+      
+      // Update previous pressure and time
+      previousPressure = currentPressure;
+      lastPressureTime = currentTime;
+    } else if (previousPressure == 0) {
+      // First reading - initialize previous pressure
+      previousPressure = currentPressure;
+      lastPressureTime = currentTime;
+      // Keep current airflow status until we have a comparison
+      currentMeasuredAirFlow = airFlowStatus;
+    } else {
+      // Not enough time has passed, keep current status
+      currentMeasuredAirFlow = airFlowStatus;
     }
-    // If not yet 3 seconds, keep previous airFlowStatus (don't change to false yet)
-    // So, do not set airFlowStatus = false until time is up
   }
+  airFlowStatus = currentMeasuredAirFlow;
 }
 
 void printState(bool cS1, bool cS2){
@@ -574,7 +633,10 @@ void displayNormalCycle() {
 void loop() {
   esp_task_wdt_reset(); // Reset watchdog
   
-  // Update sensors efficiently
+  // Check for relay state changes before updating sensors
+  checkRelayStateChanges();
+  
+  // Update sensors efficiently (will be paused if relays just switched)
   updateSensorsIfNeeded();
 
   handleWaterSensorUpdate();
