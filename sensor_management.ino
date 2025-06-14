@@ -28,8 +28,16 @@ enum SensorIndex {
   PRESSURE2_IDX = 5
 };
 
+// External variables for sensor pause functionality
+extern bool sensorsPaused;
+
 void updateSensorsIfNeeded() {
   unsigned long currentTime = millis();
+  
+  // Don't update sensors if they are paused due to relay switching
+  if (sensorsPaused) {
+    return;
+  }
   
   // Determine update interval based on system state
   unsigned long updateInterval = SENSOR_INTERVAL;
@@ -47,13 +55,18 @@ void updateSensorsIfNeeded() {
 }
 
 void updateAllSensors() {
+  // Don't update if sensors are paused
+  if (sensorsPaused) {
+    return;
+  }
+  
   // Update humidity (DHT22)
   updateHumiditySensor();
   
   // Update temperature (DHT22)
   updateTemperatureSensor();
   
-  // Update thermocouples (critical for heater control)
+  // Update thermocouples (critical for heater control) - these are most affected by relay switching
   updateThermocoupleSensors();
   
   // Update pressure sensors (for airflow detection)
@@ -64,6 +77,11 @@ void updateAllSensors() {
 }
 
 void updateHumiditySensor() {
+  // Don't update if sensors are paused
+  if (sensorsPaused) {
+    return;
+  }
+  
   static unsigned long lastAttempt = 0;
   static int retryCount = 0;
   const int MAX_RETRIES = 3;
@@ -95,6 +113,11 @@ void updateHumiditySensor() {
 }
 
 void updateTemperatureSensor() {
+  // Don't update if sensors are paused
+  if (sensorsPaused) {
+    return;
+  }
+  
   static unsigned long lastAttempt = 0;
   static int retryCount = 0;
   const int MAX_RETRIES = 3;
@@ -125,6 +148,12 @@ void updateTemperatureSensor() {
 }
 
 void updateThermocoupleSensors() {
+  // Don't update if sensors are paused - this is especially important for thermocouples
+  // as they are most affected by relay switching spikes
+  if (sensorsPaused) {
+    return;
+  }
+  
   // Thermocouple 1
   static unsigned long lastAttempt1 = 0;
   static int retryCount1 = 0;
@@ -181,6 +210,11 @@ void updateThermocoupleSensors() {
 }
 
 void updatePressureSensors() {
+  // Don't update if sensors are paused
+  if (sensorsPaused) {
+    return;
+  }
+  
   // BME280 Sensor 1
   static unsigned long lastAttempt1 = 0;
   static int retryCount1 = 0;
@@ -215,7 +249,7 @@ void updatePressureSensors() {
     lastAttempt1 = currentTime;
   }
   
-  // Update BME280 2
+  // Update BME280 2 (keeping this for compatibility, but only BME1 is used for airflow now)
   if (currentTime - lastAttempt2 >= RETRY_INTERVAL || retryCount2 == 0) {
     float pressure2 = bme2.readPressure() / 100.0F; // Convert to hPa
     
@@ -282,6 +316,11 @@ void logSensorStatus() {
   
   if (millis() - lastLog >= LOG_INTERVAL) {
     Serial.println("=== Sensor Status ===");
+    
+    if (sensorsPaused) {
+      Serial.println("SENSORS PAUSED - Relay switching in progress");
+    }
+    
     Serial.print("Humidity: "); 
     Serial.print(sensorData.validReadings[HUMIDITY_IDX] ? "OK" : "FAIL");
     Serial.print(" ("); Serial.print(sensorData.humidity); Serial.println("%)");
