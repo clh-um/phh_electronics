@@ -267,6 +267,14 @@ void publishSensorData(float heater_temp, float final_temp, float humidity, floa
     doc["data"]["heater1_state"] = heater1State;
     doc["data"]["heater2_state"] = heater2State;
     doc["data"]["heater3_state"] = heater3State;
+
+    // Warning flags
+    doc["data"]["warnings"].to<JsonObject>();
+    doc["data"]["warnings"]["heater_overtemp"] = heater_temp > Config::TEMP_THRESHOLD1;
+    doc["data"]["warnings"]["final_overtemp"] = final_temp > Config::TEMP_THRESHOLD2;
+    doc["data"]["warnings"]["water_low"] = !waterDetected;
+    doc["data"]["warnings"]["no_airflow"] = !airFlowStatus;
+
     doc["data"]["timestamp"] = time(nullptr);
 
     String output;
