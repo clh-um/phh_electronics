@@ -34,7 +34,6 @@ const int buzzer = 27;
 struct Config {
   static constexpr float TEMP_THRESHOLD1 = 34.50;
   static constexpr float TEMP_THRESHOLD2 = 33.00;
-  static constexpr float PRESSURE_THRESHOLD = 0.025;
   static constexpr unsigned long WATER_TIMEOUT = 10UL * 60UL * 1000UL;
   static constexpr unsigned long LCD_INTERVAL = 2000;
   static constexpr unsigned long SENSOR_INTERVAL = 2000;
