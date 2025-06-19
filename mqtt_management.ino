@@ -44,7 +44,7 @@ R9I4LtD+gdwyah617jzV/OeBHRnDJELqYzmp
 
 // MQTT client
 WiFiClientSecure espClient;
-PubSubClient client(espClient);  // Stack allocation
+PubSubClient client(espClient);
 
 // MQTT connection status tracking
 unsigned long lastReconnectAttempt = 0;
@@ -52,17 +52,21 @@ const unsigned long reconnectInterval = 5000; // 5 seconds between attempts
 extern unsigned long lastPublishMillis;
 extern const unsigned long publishInterval;
 
+// External heater state variables
+extern bool heater1Active;
+extern bool heater2Active;
+extern bool heater3Active;
+
 // Device ID related constants
 const int EEPROM_SIZE = 512;
 const int DEVICE_ID_ADDRESS = 0;
 const char* DEVICE_PREFIX = "HUM-";
-const int DEVICE_ID_LENGTH = 10;  // Including prefix and 5 char random ID
+const int DEVICE_ID_LENGTH = 10;
 
 // MQTT topics
-char deviceTopic[64];        // Will be set after device ID generation
-char commandTopic[64];       // Will be set after device ID generation
+char deviceTopic[64];
+char commandTopic[64];
 extern phh::device::DeviceID deviceId;
-
 
 void setupMQTT() {
     // Setup WiFi
@@ -70,12 +74,10 @@ void setupMQTT() {
     setDateTime();
 
     // Generate or retrieve device ID
-    // Initialize device ID
     if (!deviceId.initialize()) {
         #ifdef DEBUG
         Serial.println(F("Failed to initialize device ID!"));
         #endif
-        // Handle initialization failure
     }
     Serial.print("Device ID: ");
     Serial.println(deviceId.get());
@@ -86,7 +88,7 @@ void setupMQTT() {
 
     // Configure secure client
     espClient.setCACert(root_ca);
-    espClient.setInsecure(); // Try this if certificate validation fails
+    espClient.setInsecure();
 
     // Initialize MQTT client
     client.setServer(mqtt_server, mqtt_port);
@@ -106,7 +108,7 @@ void setupWiFi() {
 
     // Wait for connection
     while (WiFi.status() != WL_CONNECTED) {
-        esp_task_wdt_reset();  // Reset watchdog
+        esp_task_wdt_reset();
         delay(500);
         Serial.print(".");
     }
@@ -123,8 +125,7 @@ void setDateTime() {
         
     time_t now = time(nullptr);
     while (now < 8 * 3600 * 2) {
-        esp_task_wdt_reset();  // Reset watchdog each iteration
-        
+        esp_task_wdt_reset();
         delay(100);
         Serial.print(".");
         now = time(nullptr);
@@ -133,7 +134,7 @@ void setDateTime() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    JsonDocument doc;  // Changed from DynamicJsonDocument
+    JsonDocument doc;
     char message[length + 1];
     memcpy(message, payload, length);
     message[length] = '\0';
@@ -163,15 +164,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             switch (relayNum) {
                 case 1:
                     digitalWrite(relay1, state ? HIGH : LOW);
-                    currentState1 = state;  // This affects both heater1 and heater2
+                    heater1Active = state;
                     break;
                 case 2:
                     digitalWrite(relay2, state ? HIGH : LOW);
-                    currentState1 = state;  // This affects both heater1 and heater2
+                    heater2Active = state;
                     break;
                 case 3:
                     digitalWrite(relay3, state ? HIGH : LOW);
-                    currentState2 = state;  // This affects heater3
+                    heater3Active = state;
                     break;
                 default:
                     Serial.println("Invalid relay number");
@@ -186,24 +187,23 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                 getPressure1(),         // pressure1
                 getPressure2(),         // pressure2
                 waterDetected,          // water_detected
-                currentState1,          // heater1_state (relay1)
-                currentState1,          // heater2_state (relay2)
-                currentState2           // heater3_state (relay3)
+                heater1Active,          // heater1_state
+                heater2Active,          // heater2_state
+                heater3Active           // heater3_state
             );
 
             // Send confirmation message
-            JsonDocument response;  // Changed from DynamicJsonDocument
+            JsonDocument response;
             response["device_id"] = deviceId.get();
             response["type"] = "response";
             
-            // Updated way to create nested object
             response["data"].to<JsonObject>();
             response["data"]["command"] = "relay_control";
             response["data"]["relay"] = relayNum;
             response["data"]["success"] = true;
-            response["data"]["heater1_state"] = currentState1;
-            response["data"]["heater2_state"] = currentState1;
-            response["data"]["heater3_state"] = currentState2;
+            response["data"]["heater1_state"] = heater1Active;
+            response["data"]["heater2_state"] = heater2Active;
+            response["data"]["heater3_state"] = heater3Active;
             response["data"]["timestamp"] = time(nullptr);
 
             String responseStr;
@@ -216,7 +216,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 bool reconnectMQTT() {
-    // Loop until we're reconnected
     int attempts = 0;
     while (!client.connected() && attempts < 5) {
         attempts++;
@@ -251,12 +250,11 @@ void publishSensorData(float heater_temp, float final_temp, float humidity, floa
         return;
     }
 
-    JsonDocument doc;  // Changed from DynamicJsonDocument
+    JsonDocument doc;
     
     doc["device_id"] = deviceId.get();
     doc["type"] = "data";
 
-    // Updated way to create nested object
     doc["data"].to<JsonObject>();
     doc["data"]["humidity"] = humidity;
     doc["data"]["heater_temp"] = heater_temp;
