@@ -98,6 +98,10 @@ bool sensorsPaused = false;
 unsigned long systemStartTime = 0;
 bool systemFullyInitialized = false;
 
+// Track override states for each relay
+bool relays_override = false;
+bool relay_override_states[3] = {false, false, false};
+
 // System states for better organization
 enum SystemState {
   INITIALIZING,
@@ -344,6 +348,7 @@ void playFinalWarning() {
 
 void handleTemperatureControl() {
   // Emergency shutdown takes priority
+  
   if (currentSystemState == EMERGENCY_SHUTDOWN || currentSystemState == SENSOR_ERROR) {
     digitalWrite(relay1, LOW);
     digitalWrite(relay2, LOW);
@@ -355,6 +360,18 @@ void handleTemperatureControl() {
     currentState2 = false;
     currentState3 = false;
     return;
+  }
+
+  if (relays_override) {
+      // Enforce all relay override states
+      digitalWrite(relay1, relay_override_states[0] ? HIGH : LOW);
+      digitalWrite(relay2, relay_override_states[1] ? HIGH : LOW);
+      digitalWrite(relay3, relay_override_states[2] ? HIGH : LOW);
+      heater1Active = relay_override_states[0];
+      heater2Active = relay_override_states[1];
+      heater3Active = relay_override_states[2];
+      // currentState1, currentState2, currentState3 as needed
+      return; // Skip automatic logic
   }
 
   // During initialization, keep heaters off for safety

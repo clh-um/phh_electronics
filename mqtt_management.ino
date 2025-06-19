@@ -161,18 +161,25 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
         // Handle relay control based on relay number
         if (command == "relay_control") {
+
+            relay_override_states[relayNum - 1] = state;
+            relays_override = true;
+
             switch (relayNum) {
                 case 1:
                     digitalWrite(relay1, state ? HIGH : LOW);
                     heater1Active = state;
+ 
                     break;
                 case 2:
                     digitalWrite(relay2, state ? HIGH : LOW);
                     heater2Active = state;
+
                     break;
                 case 3:
                     digitalWrite(relay3, state ? HIGH : LOW);
                     heater3Active = state;
+
                     break;
                 default:
                     Serial.println("Invalid relay number");
