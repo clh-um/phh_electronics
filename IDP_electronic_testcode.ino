@@ -32,7 +32,7 @@ const int buzzer = 27;
 
 // Configuration constants
 struct Config {
-  static constexpr float TEMP_THRESHOLD1 = 34.50;
+  static constexpr float TEMP_THRESHOLD1 = 34.00;  // Changed from 34.50 to 34.00
   static constexpr float TEMP_THRESHOLD2 = 33.00;
   static constexpr unsigned long WATER_TIMEOUT = 10UL * 60UL * 1000UL;
   static constexpr unsigned long LCD_INTERVAL = 2000;
@@ -40,6 +40,7 @@ struct Config {
   static constexpr unsigned long FAST_SENSOR_INTERVAL = 500;
   static constexpr unsigned long RETRY_INTERVAL = 100;
   static constexpr unsigned long STARTUP_GRACE_PERIOD = 30000; // 30 seconds grace period
+  static constexpr unsigned long HEATER1_SHUTDOWN_DELAY = 2UL * 60UL * 1000UL; // 2 minutes
 };
 
 // Hardware objects
@@ -63,12 +64,22 @@ unsigned long buzzerPreviousMillis = 0;
 int buzzerState = 0;
 bool previousState1 = false, currentState1 = false;
 bool previousState2 = false, currentState2 = false;
+bool previousState3 = false, currentState3 = false; // Added for relay2
 unsigned long lastWaterSensorCheck = 0;
 const unsigned long WATER_SENSOR_CHECK_INTERVAL = 100; // Check every 100ms
 phh::device::DeviceID deviceId; // Keep the original DeviceID class
 bool lastAirFlowStatus = false;
 unsigned long airFlowLostStartTime = 0;
 const unsigned long AIR_FLOW_LOST_CONFIRMATION_TIME = 3000;
+
+// NEW: Two-stage heater control variables
+bool heater1Active = false;  // State of heater 1 (relay1)
+bool heater2Active = false;  // State of heater 2 (relay2)
+bool heater3Active = false;  // State of heater 3 (relay3)
+unsigned long heater2ShutdownTime = 0;  // When heater 2 was shut down due to high temp
+bool heater2ShutdownDueToTemp = false;  // Flag to track if heater 2 was shut down due to temperature
+unsigned long highTempStartTime = 0;    // When thermocouple 1 first exceeded threshold
+bool highTempTimerActive = false;       // Whether we're tracking high temperature duration
 
 // NEW: Airflow monitoring with single sensor
 float previousPressure = 0.0;
@@ -159,6 +170,11 @@ void initializeHardware() {
   digitalWrite(relay1, LOW);
   digitalWrite(relay2, LOW);
   digitalWrite(relay3, LOW);
+  
+  // Initialize heater states
+  heater1Active = false;
+  heater2Active = false;
+  heater3Active = false;
   
   dht.begin();
 }
@@ -332,8 +348,12 @@ void handleTemperatureControl() {
     digitalWrite(relay1, LOW);
     digitalWrite(relay2, LOW);
     digitalWrite(relay3, LOW);
+    heater1Active = false;
+    heater2Active = false;
+    heater3Active = false;
     currentState1 = false;
     currentState2 = false;
+    currentState3 = false;
     return;
   }
 
@@ -342,8 +362,12 @@ void handleTemperatureControl() {
     digitalWrite(relay1, LOW);
     digitalWrite(relay2, LOW);
     digitalWrite(relay3, LOW);
+    heater1Active = false;
+    heater2Active = false;
+    heater3Active = false;
     currentState1 = false;
     currentState2 = false;
+    currentState3 = false;
     return;
   }
 
@@ -352,32 +376,94 @@ void handleTemperatureControl() {
   float Tt2 = getThermocouple2();
 
   if (isnan(Tt1) || Tt1 < -50 || Tt1 > 150) {
-    // Handle sensor error
     Tt1 = -999.0;  // Error indicator
   }
   if (isnan(Tt2) || Tt2 < -50 || Tt2 > 150) {
-    // Handle sensor error
     Tt2 = -999.0;  // Error indicator
   }
   
-  // Control heaters based on temperature with safety checks
-  if (Tt1 > Config::TEMP_THRESHOLD1 || Tt1 < 0) { // Include safety check
-    digitalWrite(relay1, LOW);
-    digitalWrite(relay2, LOW);
-    currentState1 = false;
-  } else {
-    digitalWrite(relay1, HIGH);
-    digitalWrite(relay2, HIGH);
-    currentState1 = true;
-  }
-
-  if (Tt2 > Config::TEMP_THRESHOLD2 || Tt2 < 0) { // Include safety check
+  // NEW: Two-stage temperature control for heaters 1 and 2
+  handleTwoStageHeaterControl(Tt1);
+  
+  // Control heater 3 based on thermocouple 2 (unchanged logic)
+  if (Tt2 > Config::TEMP_THRESHOLD2 || Tt2 < 0) {
     digitalWrite(relay3, LOW);
+    heater3Active = false;
     currentState2 = false;
   } else {
     digitalWrite(relay3, HIGH);
+    heater3Active = true;
     currentState2 = true;
   }
+}
+
+void handleTwoStageHeaterControl(float Tt1) {
+  unsigned long currentTime = millis();
+  
+  // Check if temperature is above threshold
+  if (Tt1 > Config::TEMP_THRESHOLD1 && Tt1 > 0) {
+    
+    // Start tracking high temperature time if not already tracking
+    if (!highTempTimerActive) {
+      highTempStartTime = currentTime;
+      highTempTimerActive = true;
+      Serial.println("High temperature detected - starting timer");
+    }
+    
+    // Stage 1: Immediately shut down heater 2 when temp > 34°C
+    if (heater2Active) {
+      digitalWrite(relay2, LOW);
+      heater2Active = false;
+      heater2ShutdownDueToTemp = true;
+      heater2ShutdownTime = currentTime;
+      Serial.println("Stage 1: Heater 2 shut down due to high temperature");
+    }
+    
+    // Stage 2: After 2 minutes of continuous high temperature, shut down heater 1
+    unsigned long highTempDuration = currentTime - highTempStartTime;
+    if (highTempDuration >= Config::HEATER1_SHUTDOWN_DELAY) {
+      if (heater1Active) {
+        digitalWrite(relay1, LOW);
+        heater1Active = false;
+        Serial.println("Stage 2: Heater 1 shut down after 2 minutes of high temperature");
+      }
+    }
+    
+  } else {
+    // Temperature is below threshold or sensor error
+    
+    // Reset high temperature timer
+    if (highTempTimerActive) {
+      highTempTimerActive = false;
+      Serial.println("Temperature normalized - resetting timer");
+    }
+    
+    // Re-enable heaters if temperature is acceptable and no sensor error
+    if (Tt1 > 0) {  // Valid sensor reading
+      if (!heater1Active) {
+        digitalWrite(relay1, HIGH);
+        heater1Active = true;
+        Serial.println("Heater 1 re-enabled");
+      }
+      
+      if (!heater2Active) {
+        digitalWrite(relay2, HIGH);
+        heater2Active = true;
+        heater2ShutdownDueToTemp = false;
+        Serial.println("Heater 2 re-enabled");
+      }
+    } else {
+      // Sensor error - shut down heaters for safety
+      digitalWrite(relay1, LOW);
+      digitalWrite(relay2, LOW);
+      heater1Active = false;
+      heater2Active = false;
+    }
+  }
+  
+  // Update current states for backward compatibility
+  currentState1 = heater1Active;
+  currentState3 = heater2Active; // Note: currentState3 represents heater2 (relay2)
 }
 
 void handleAirFlowMonitoring() {
@@ -421,16 +507,21 @@ void handleAirFlowMonitoring() {
   airFlowStatus = currentMeasuredAirFlow;
 }
 
-void printState(bool cS1, bool cS2){
+void printState(bool cS1, bool cS2, bool cS3){
   if (cS1 != previousState1){
     Serial.print("Status update: ");
-    Serial.println(cS1 ? "Current across Heater 1&2 Flowing" : "Current across Heater 1&2 NOT Flowing");
+    Serial.println(cS1 ? "Heater 1 (Relay1) ON" : "Heater 1 (Relay1) OFF");
     previousState1 = cS1;
   }
   if (cS2 != previousState2){
     Serial.print("Status update: ");
-    Serial.println(cS2 ? "Current across Heater 3 Flowing" : "Current across Heater 3 NOT Flowing");
+    Serial.println(cS2 ? "Heater 3 (Relay3) ON" : "Heater 3 (Relay3) OFF");
     previousState2 = cS2;
+  }
+  if (cS3 != previousState3){
+    Serial.print("Status update: ");
+    Serial.println(cS3 ? "Heater 2 (Relay2) ON" : "Heater 2 (Relay2) OFF");
+    previousState3 = cS3;
   }
 }
 
@@ -570,8 +661,6 @@ void displayNormalCycle() {
   float h = getHumidity();
   float Tt1 = getThermocouple1();
   float Tt2 = getThermocouple2();
-  const char* h1Status = currentState1 ? "Heating" : "Not Heating";
-  const char* h3Status = currentState2 ? "Heating" : "Not Heating";
 
   switch (lcdState) {
     case 0:
@@ -603,30 +692,42 @@ void displayNormalCycle() {
       break;
     case 4:
       lcd.setCursor(0, 0);
-      lcd.print("Heater 1 & 2:");
+      lcd.print("Heater 1:");
       lcd.setCursor(0, 1);
-      lcd.print(h1Status);
+      lcd.print(heater1Active ? "ON" : "OFF");
+      if (highTempTimerActive) {
+        lcd.print(" (HT)");
+      }
       break;
     case 5:
       lcd.setCursor(0, 0);
-      lcd.print("Heater 3:");
+      lcd.print("Heater 2:");
       lcd.setCursor(0, 1);
-      lcd.print(h3Status);
+      lcd.print(heater2Active ? "ON" : "OFF");
+      if (heater2ShutdownDueToTemp) {
+        lcd.print(" (HT)");
+      }
       break;
     case 6:
+      lcd.setCursor(0, 0);
+      lcd.print("Heater 3:");
+      lcd.setCursor(0, 1);
+      lcd.print(heater3Active ? "ON" : "OFF");
+      break;
+    case 7:
       lcd.setCursor(0, 0);
       lcd.print("Air Flow:");
       lcd.setCursor(0, 1);
       lcd.print(airFlowStatus ? "Flowing" : "Not Flowing");
       break;
-    case 7:
+    case 8:
       lcd.setCursor(0, 0);
       lcd.print("Water Level");
       lcd.setCursor(0, 1);
       lcd.print(waterDetected ? "Detected" : "Not Detected");
       break;
   }
-  lcdState = (lcdState + 1) % 8;
+  lcdState = (lcdState + 1) % 9; // Updated to 9 states
 }
 
 void loop() {
@@ -653,22 +754,25 @@ void loop() {
   handleLcdDisplay();
   handleMQTT();
 
+  // Print state changes
+  printState(heater1Active, heater3Active, heater2Active);
+
   // Publish sensor data periodically (only after full initialization)
   if (systemFullyInitialized) {
     unsigned long currentMillis = millis();
     if (currentMillis - lastPublishMillis >= publishInterval) {
         lastPublishMillis = currentMillis;
         
-          publishSensorData(
+        publishSensorData(
           getThermocouple1(),     // heater_temp
           getThermocouple2(),     // final_temp
           getHumidity(),          // humidity
           getPressure1(),         // pressure1
           getPressure2(),         // pressure2
           waterDetected,          // water_detected
-          currentState1,          // heater1_state (relay1)
-          currentState1,          // heater2_state (relay2)
-          currentState2           // heater3_state (relay3)
+          heater1Active,          // heater1_state (relay1)
+          heater2Active,          // heater2_state (relay2)
+          heater3Active           // heater3_state (relay3)
         );
     }
   }
