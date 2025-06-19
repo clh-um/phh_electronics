@@ -1,17 +1,16 @@
 // Sensor readings structure
 struct SensorReadings {
   float humidity;
-  float temperature;
   float thermocouple1;
   float thermocouple2;
   float pressure1;
   float pressure2;
   unsigned long lastUpdate;
-  bool validReadings[6]; // Track which readings are valid
+  bool validReadings[5]; // Track which readings are valid
 };
 
 // Global sensor readings instance
-SensorReadings sensorData = {0, 0, 0, 0, 0, 0, 0, {false, false, false, false, false, false}};
+SensorReadings sensorData = {0, 0, 0, 0, 0, 0, {false, false, false, false, false}};
 
 // Configuration constants
 const unsigned long SENSOR_INTERVAL = 2000;        // Read sensors every 2 seconds
@@ -21,11 +20,10 @@ const unsigned long RETRY_INTERVAL = 100;          // Time between retries
 // Sensor indices for the validReadings array
 enum SensorIndex {
   HUMIDITY_IDX = 0,
-  TEMPERATURE_IDX = 1,
-  THERMOCOUPLE1_IDX = 2,
-  THERMOCOUPLE2_IDX = 3,
-  PRESSURE1_IDX = 4,
-  PRESSURE2_IDX = 5
+  THERMOCOUPLE1_IDX = 1,
+  THERMOCOUPLE2_IDX = 2,
+  PRESSURE1_IDX = 3,
+  PRESSURE2_IDX = 4
 };
 
 // External variables for sensor pause functionality
@@ -62,9 +60,6 @@ void updateAllSensors() {
   
   // Update humidity (DHT22)
   updateHumiditySensor();
-  
-  // Update temperature (DHT22)
-  updateTemperatureSensor();
   
   // Update thermocouples (critical for heater control) - these are most affected by relay switching
   updateThermocoupleSensors();
@@ -106,41 +101,6 @@ void updateHumiditySensor() {
     if (retryCount >= MAX_RETRIES) {
       Serial.println("Warning: DHT humidity reading failed after retries");
       retryCount = 0; // Reset to try again next cycle
-    }
-  }
-  
-  lastAttempt = currentTime;
-}
-
-void updateTemperatureSensor() {
-  // Don't update if sensors are paused
-  if (sensorsPaused) {
-    return;
-  }
-  
-  static unsigned long lastAttempt = 0;
-  static int retryCount = 0;
-  const int MAX_RETRIES = 3;
-  
-  unsigned long currentTime = millis();
-  
-  if (currentTime - lastAttempt < RETRY_INTERVAL && retryCount > 0) {
-    return;
-  }
-  
-  float newTemp = dht.readTemperature();
-  
-  if (!isnan(newTemp) && newTemp >= -40 && newTemp <= 80) { // Reasonable range
-    sensorData.temperature = newTemp;
-    sensorData.validReadings[TEMPERATURE_IDX] = true;
-    retryCount = 0;
-  } else {
-    sensorData.validReadings[TEMPERATURE_IDX] = false;
-    retryCount++;
-    
-    if (retryCount >= MAX_RETRIES) {
-      Serial.println("Warning: DHT temperature reading failed after retries");
-      retryCount = 0;
     }
   }
   
@@ -190,7 +150,7 @@ void updateThermocoupleSensors() {
   
   // Update Thermocouple 2
   if (currentTime - lastAttempt2 >= RETRY_INTERVAL || retryCount2 == 0) {
-    float temp2 = thermocouple2.readCelsius();
+    float temp2 = thermocouple2.readCelsius() - 5;
     
     if (!isnan(temp2) && temp2 >= MIN_TEMP && temp2 <= MAX_TEMP) {
       sensorData.thermocouple2 = temp2;
@@ -275,10 +235,6 @@ float getHumidity() {
   return sensorData.validReadings[HUMIDITY_IDX] ? sensorData.humidity : -1.0;
 }
 
-float getTemperature() {
-  return sensorData.validReadings[TEMPERATURE_IDX] ? sensorData.temperature : -999.0;
-}
-
 float getThermocouple1() {
   return sensorData.validReadings[THERMOCOUPLE1_IDX] ? sensorData.thermocouple1 : -999.0;
 }
@@ -302,7 +258,7 @@ bool areCriticalSensorsWorking() {
 }
 
 bool areAllSensorsWorking() {
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < 5; i++) {
     if (!sensorData.validReadings[i]) {
       return false;
     }
@@ -324,10 +280,6 @@ void logSensorStatus() {
     Serial.print("Humidity: "); 
     Serial.print(sensorData.validReadings[HUMIDITY_IDX] ? "OK" : "FAIL");
     Serial.print(" ("); Serial.print(sensorData.humidity); Serial.println("%)");
-    
-    Serial.print("Temperature: "); 
-    Serial.print(sensorData.validReadings[TEMPERATURE_IDX] ? "OK" : "FAIL");
-    Serial.print(" ("); Serial.print(sensorData.temperature); Serial.println("°C)");
     
     Serial.print("Thermocouple1: "); 
     Serial.print(sensorData.validReadings[THERMOCOUPLE1_IDX] ? "OK" : "FAIL");
