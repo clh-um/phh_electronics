@@ -162,8 +162,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         // Handle relay control based on relay number
         if (command == "relay_control") {
 
-            relay_override_states[relayNum - 1] = state;
-            relays_override = true;
+            if (state == false) { // OFF
+                relay_override_states[relayNum - 1] = false;
+                relays_override = true; // Override ON
+            } else { // ON
+                relays_override = false; // Resume normal logic
+            }
 
             switch (relayNum) {
                 case 1:
